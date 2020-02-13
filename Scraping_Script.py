@@ -1,5 +1,4 @@
 # Austin Scheetz
-# FES 611: Intro to Environmental Data Science
 
 # BEFORE RUNNING THIS CODE:
 # Download the Chrome driver from https://chromedriver.chromium.org/downloads
