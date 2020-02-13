@@ -137,8 +137,8 @@ for index,interview in enumerate(zip(ID_list,link_list)):
     driver.get(interview[1])
         
     # Navigate to the heifer tradeoff question
-    WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH,"//a[text()='Ningependa kujua njinsi unavyo mthamini ngombe wako wa kike.']")))
-    heifer_question = driver.find_element(By.XPATH,quest).get_attribute("href") # The Swahili there is the question text respondents saw
+    WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH,quest)))
+    heifer_question = driver.find_element(By.XPATH,quest).get_attribute("href")
     driver.get(heifer_question)
     
     # Scrape the page for the questions the respondent saw, and their answers
