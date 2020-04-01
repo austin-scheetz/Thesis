@@ -4,29 +4,28 @@
 
 setwd("C:/Users/austi/Documents/Yale/Thesis/Data")
 
-#######   Libraries and source codes   #######  
+#######   Libraries and functions   #######  
 # __________________________________________ #
 
 library(tidyverse)
 library(mice)
 library(PerformanceAnalytics)
-library(corrplot)
 library(sm)
-library(micEconCES)
-library(MatchIt)
 library(BAMMtools)
-library(Matching)
-library(rgenoud)
 library(Deriv)
+library(rgenoud)
 library(tcltk)
 library(gridExtra)
+library(grid)
 library(rowr)
-library(boot)
 library(rootSolve)
 
 select <- dplyr::select
 
 source("http://www.reuningscherer.net/STAT660/R/CSQPlot.r.txt")
+
+CES <- function(C,G,a,p) (a*C^p+(1-a)*G^p)^(1/p)
+rev.CES <- function(C,a,p,U) ((U^p-a*C^p)/(1-a))^(1/p)
 
 #######   Code before Python treatment   #######
 # ____________________________________________ #
@@ -157,124 +156,10 @@ pastoralist$cgr_250 <- NULL
 #######   Creating variables   #######
 # __________________________________ #
 
-pastoralist$herd <- pastoralist$num_heifers + pastoralist$num_steers
-pastoralist$herd <- ifelse(pastoralist$cattle_ranch > pastoralist$herd, pastoralist$cattle_ranch, pastoralist$herd)
-
-pastoralist$tlu <- pastoralist$num_steers + pastoralist$num_heifers + pastoralist$num_goats*0.2 + pastoralist$num_camels
-
-# Imputing missing education observations
-educind.data <- pastoralist[,c(2:33,88)]
-educind.data <- educind.data[,-21]
-imputed <- mice(data = educind.data, method = "norm.predict", m = 5)
-for (i in 1:5){
-  varname <- paste("completed", i, sep = "")
-  varname1 <- assign(varname, mice::complete(imputed, i))
-  print(paste("Any NA values in completed", i, "?",sep = ""))
-  print(anyNA(varname1))
-  print(summary(varname1$education))
-}
-df <- data.frame(cbind(completed1$education,completed2$education,completed3$education,completed4$education,completed5$education))
-pastoralist$educ.pred <- rowMeans(df)
-pastoralist$education[is.na(pastoralist$education) == TRUE] <- pastoralist$educ.pred[is.na(pastoralist$education) == TRUE]
-pastoralist$educ.ind <- pastoralist$school_sons + pastoralist$school_daughters + pastoralist$cu_sons + pastoralist$cu_daughters + pastoralist$educ.pred
-
-rm(imputed)
-rm(completed1)
-rm(completed2)
-rm(completed3)
-rm(completed4)
-rm(completed5)
-rm(varname1)
-rm(df)
-rm(educind.data)
-rm(i)
-rm(varname)
-
-# Ranch dummy
+pastoralist$herd  <- pastoralist$num_heifers + pastoralist$num_steers
+pastoralist$herd  <- ifelse(pastoralist$cattle_ranch > pastoralist$herd, pastoralist$cattle_ranch, pastoralist$herd)
 pastoralist$ranch <- ifelse(pastoralist$cattle_ranch == 0, 0, 1)
 
-#######   PCA wealth index   #######
-# ________________________________ #
-
-# Extracting variables to include
-d2 <- pastoralist[,c(4:29)]
-d2 <- d2 %>% select(-num_steers, -num_heifers, -num_goats, -num_steers_2y, -num_heifers_2y, -num_goats_2y, -job)
-d2 <- as.data.frame(scale(d2))
-
-# Checking for multivariate normality
-CSQPlot(d2,label="Demographic Data")
-
-# Running PCA
-pc.nl <- princomp(d2, cor = TRUE)
-print(summary(pc.nl), digits = 2, loadings = pc.nl$loadings, cutoff = 0)
-
-# Adding results to dataframe
-pastoralist <- pastoralist %>% mutate(wealth.pc.nl = education*(pc.nl[["loadings"]][1]) + 
-                                                      family_size*(pc.nl[["loadings"]][2]) + 
-                                                      children*(pc.nl[["loadings"]][3]) + 
-                                                      num_son*(pc.nl[["loadings"]][4]) + 
-                                                      school_sons*(pc.nl[["loadings"]][5]) + 
-                                                      cu_sons*(pc.nl[["loadings"]][6]) + 
-                                                      num_daughter*(pc.nl[["loadings"]][7]) + 
-                                                      school_daughters*(pc.nl[["loadings"]][8]) + 
-                                                      cu_daughters*(pc.nl[["loadings"]][9]) + 
-                                                      num_cattle_herders*(pc.nl[["loadings"]][10]) +
-                                                      num_goat_herders*(pc.nl[["loadings"]][11]) + 
-                                                      employed*(pc.nl[["loadings"]][12]) + 
-                                                      electric*(pc.nl[["loadings"]][13]) + 
-                                                      tv*(pc.nl[["loadings"]][14]) + 
-                                                      stove*(pc.nl[["loadings"]][15]) + 
-                                                      rooms*(pc.nl[["loadings"]][16]) + 
-                                                      motorbike*(pc.nl[["loadings"]][17]) + 
-                                                      car*(pc.nl[["loadings"]][18]) + 
-                                                      phones*(pc.nl[["loadings"]][19]))
-
-rm(d2)
-rm(pc.nl)
-
-#######   Creating and analyzing rigidity classes   #######
-# _______________________________________________________ #
-
-## Prep 
-
-# Classifying "inelasticity" (rigidity) for goats and cattle
-pastoralist$goat.i   <- ifelse(pastoralist$ranch_free_goat == pastoralist$ranch_250ksh_goat
-                               & pastoralist$ranch_250ksh_goat == pastoralist$ranch_500ksh_goat 
-                               & pastoralist$ranch_500ksh_goat == pastoralist$ranch_750ksh_goat 
-                               & pastoralist$ranch_750ksh_goat == pastoralist$ranch_1000ksh_goat,1,0)
-
-pastoralist$cattle.i <- ifelse(pastoralist$ranch_free_cattle == pastoralist$ranch_250ksh_cattle 
-                               & pastoralist$ranch_250ksh_cattle == pastoralist$ranch_500ksh_cattle 
-                               & pastoralist$ranch_500ksh_cattle == pastoralist$ranch_750ksh_cattle 
-                               & pastoralist$ranch_750ksh_cattle == pastoralist$ranch_1000ksh_cattle,1,0)
-
-# Putting these into a clearer categorical form
-pastoralist$class <- ifelse(pastoralist$cattle.i == 0, 
-                            ifelse(pastoralist$goat.i == 0, "CEGE", "CEGI"), 
-                            ifelse(pastoralist$goat.i == 0, "CIGE", "CIGI"))
-    # This step renames the categorical variable because it appears differently in different code
-pastoralist$classfixed <- pastoralist$class
-pastoralist$classfixed[pastoralist$classfixed == "CIGI"] <- "CR,GR"
-pastoralist$classfixed[pastoralist$classfixed == "CEGI"] <- "CF,GR"
-pastoralist$classfixed[pastoralist$classfixed == "CIGE"] <- "CR,GF"
-pastoralist$classfixed[pastoralist$classfixed == "CEGE"] <- "CF,GF"
-
-# Creating a binary for super-rigid or not
-pastoralist$II <- ifelse(pastoralist$class == "CIGI", 1, 0)
-
-# Create barplot visualizing ranch use by rigidty class
-bp <- table(pastoralist$ranch, pastoralist$classfixed)
-barplot(bp, beside = TRUE, col = c(1,2), main = "Ranch access by rigidity class", ylab = "Number of respondents", xlab = "Rigidity class")
-legend("topleft", c("Currently off ranch", "Currently on ranch"), fill = c(1,2))
-
-table(pastoralist$classfixed)
-
-## Analysis 
-
-# Predicting contract acceptance by class
-prob.accept <- glm(ranch ~ classfixed + herd + num_goats + wealth.pc.nl, data = pastoralist, family = binomial(link = "logit"))
-summary(prob.accept)
-exp(coef(prob.accept))
 #######   CES preparation   #######
 # _______________________________ #
 
@@ -301,37 +186,31 @@ for (i in 1:nrow(xast)){
       }
     }
   }
-  df$quan[df$quan == 0] <- 0.01 # Recoding so that the 1/x operation works
   
   # This concludes the data prep portion of this loop
   
   if(length(unique(df$quan)) > 1){
     
-    reggie  <- lm(df$price ~ df$quan + I(1/df$quan))
-    reggie2 <- lm(df$price ~ df$quan)
+    reggie <- lm(df$price ~ df$quan + I(df$quan^2))
     
-    xast$intercept.c[i]   <- reggie$coefficients[1]
-    xast$slope.c[i]       <- reggie$coefficients[2]
-    xast$slope.inv.c[i]   <- reggie$coefficients[3]
-    xast$intercept2.c[i]  <- reggie2$coefficients[1]
-    xast$slope2.c[i]      <- reggie2$coefficients[2]
+    xast$intercept.c[i]  <- reggie$coefficients[1]
+    xast$slope.c[i]      <- reggie$coefficients[2]
+    xast$slope2.c[i]     <- reggie$coefficients[3]
     
   } else{
     if(length(unique(df$quan)) == 1){
-      xast$intercept.c[i]   <- NA
-      xast$slope.c[i]       <- Inf
-      xast$slope.inv.c[i]   <- NA
-      xast$intercept2.c[i]  <- NA
-      xast$slope2.c[i]      <- Inf
+      xast$intercept.c[i]  <- NA
+      xast$slope.c[i]      <- Inf
+      xast$slope2.c[i]     <- NA
     } 
   }
 }
 # Now, creating a regression equation and adding to the df
 for (i in 1:nrow(xast)){
-  xast$eqn.c[i] <- paste(xast$intercept.c[i], " + ", xast$slope.c[i]," * q + ", xast$slope.inv.c[i], " * q^-1", sep = "")
+  xast$eqn.c[i] <- paste(xast$intercept.c[i]," + ",xast$slope.c[i]," * q + ",xast$slope2.c[i]," * q^2",sep="")
   
-  if(is.na(xast$slope.inv.c[i]) == TRUE){
-    xast$eqn.c[i] <- paste(xast$intercept2.c[i], " + ", xast$slope2.c[i]," * q", sep = "")
+  if(is.na(xast$slope2.c[i]) == TRUE){
+    xast$eqn.c[i] <- paste(xast$intercept.c[i], " + ", xast$slope.c[i]," * q", sep = "")
   }
   
   if(is.infinite(xast$slope.c[i]) == TRUE){
@@ -344,11 +223,10 @@ for (i in 1:nrow(xast)){
 }
 # Now deriving to get slope
 for (i in 1:nrow(xast)){
-  if(is.infinite(xast$slope.c[i]) == FALSE){
-    xast$derivative.c[i] <- Deriv(xast$eqn.c[i], "q") 
-  } else{xast$derivative.c[i] <- NA}
+  if(is.finite(xast$slope.c[i]) == TRUE){
+    xast$derivative.c[i] <- Deriv(xast$eqn.c[i], "q")
+  } else xast$derivative.c[i] <- NA
 }
-rm(df,reggie,reggie2,i,j)
 
 ## Goats
 # First, getting goat curve info and adding to the corresponding row in the original data
@@ -362,37 +240,31 @@ for (i in 1:nrow(xast)){
       }
     }
   }
-  df$quan[df$quan == 0] <- 0.01 # Recoding so that the 1/x operation works
   
   # This concludes the data prep portion of this loop
   
   if(length(unique(df$quan)) > 1){
     
-    reggie  <- lm(df$price ~ df$quan + I(1/df$quan))
-    reggie2 <- lm(df$price ~ df$quan)
+    reggie <- lm(df$price ~ df$quan + I(df$quan^2))
     
-    xast$intercept.g[i]   <- reggie$coefficients[1]
-    xast$slope.g[i]       <- reggie$coefficients[2]
-    xast$slope.inv.g[i]   <- reggie$coefficients[3]
-    xast$intercept2.g[i]  <- reggie2$coefficients[1]
-    xast$slope2.g[i]      <- reggie2$coefficients[2]
+    xast$intercept.g[i]  <- reggie$coefficients[1]
+    xast$slope.g[i]      <- reggie$coefficients[2]
+    xast$slope2.g[i]     <- reggie$coefficients[3]
     
   } else{
     if(length(unique(df$quan)) == 1){
-      xast$intercept.g[i]   <- NA
-      xast$slope.g[i]       <- Inf
-      xast$slope.inv.g[i]   <- NA
-      xast$intercept2.g[i]  <- NA
-      xast$slope2.g[i]      <- Inf
+      xast$intercept.g[i]  <- NA
+      xast$slope.g[i]      <- Inf
+      xast$slope2.g[i]     <- NA
     } 
   }
 }
 # Now, creating a regression equation and adding to the df
 for (i in 1:nrow(xast)){
-  xast$eqn.g[i] <- paste(xast$intercept.g[i], " + ", xast$slope.g[i]," * q + ", xast$slope.inv.g[i], " * q^-1", sep = "")
+  xast$eqn.g[i] <- paste(xast$intercept.g[i]," + ",xast$slope.g[i]," * q + ",xast$slope2.g[i]," * q^2",sep="")
   
-  if(is.na(xast$slope.inv.g[i]) == TRUE){
-    xast$eqn.g[i] <- paste(xast$intercept2.g[i], " + ", xast$slope2.g[i]," * q", sep = "")
+  if(is.na(xast$slope2.g[i]) == TRUE){
+    xast$eqn.g[i] <- paste(xast$intercept.g[i], " + ", xast$slope.g[i]," * q", sep = "")
   }
   
   if(is.infinite(xast$slope.g[i]) == TRUE){
@@ -405,15 +277,27 @@ for (i in 1:nrow(xast)){
 }
 # Now deriving to get slope
 for (i in 1:nrow(xast)){
-  if(is.infinite(xast$slope.g[i]) == FALSE){
-    xast$derivative.g[i] <- Deriv(xast$eqn.g[i], "q") 
-  } else{xast$derivative.g[i] <- NA}
+  if(is.finite(xast$slope.g[i]) == TRUE){
+    xast$derivative.g[i] <- Deriv(xast$eqn.g[i], "q")
+  } else xast$derivative.g[i] <- NA
 }
-rm(df,reggie,reggie2,i,j)
 
+rm(df,reggie,i,j)
+
+# Adding this information to main dataset
+xast.merge <- data.frame(Respondent_ID = xast$Respondent_ID, 
+                         int.c = xast$intercept.c,
+                         b1.c  = xast$slope.c,
+                         b2.c  = xast$slope2.c,
+                         int.g = xast$intercept.g,
+                         b1.g  = xast$slope.g,
+                         b2.g  = xast$slope2.g)
+
+pastoralist <- merge(pastoralist, xast.merge, by = "Respondent_ID", all = TRUE)
+
+### Calculating MRTS for each respondent
 df.mrts <- xast[,c("ranch_free_cattle", "ranch_250ksh_cattle", "ranch_500ksh_cattle", "ranch_750ksh_cattle", "ranch_1000ksh_cattle","ranch_free_goat", "ranch_250ksh_goat", "ranch_500ksh_goat", "ranch_750ksh_goat", "ranch_1000ksh_goat", "Respondent_ID", "derivative.c", "derivative.g")]
 
-### Calculating MRTS at each price
 for (i in 1:nrow(df.mrts)){
   if(is.na(df.mrts$derivative.c[i]) == FALSE & is.na(df.mrts$derivative.g[i]) == FALSE){
     for (j in 1:5){
@@ -451,7 +335,18 @@ for (i in 1:nrow(df.mrts)){
 }
 rm(gdf)
 
-length(df.mrts$mrts0[is.na(df.mrts$mrts0) == FALSE])
+### Fixing duplicate MRTS's so that regression runs later
+df.mrts$n.unique <- apply(df.mrts[,c(14:18)], 1, function(x) length(unique(na.omit(x))))
+for(i in 1:nrow(df.mrts)){
+  if(df.mrts$n.unique[i] < 2){
+    
+    df.mrts$mrts0[i]    <- NA
+    df.mrts$mrts250[i]  <- NA
+    df.mrts$mrts500[i]  <- NA
+    df.mrts$mrts750[i]  <- NA
+    df.mrts$mrts1000[i] <- NA
+  }
+}
 
 ### Creating long data frame that is suitable for regression
 df.reg <- data.frame(price = seq(0,1000,250), 
@@ -494,6 +389,7 @@ for(i in 2:nrow(df.mrts)){
   rm(df)
 }
 
+
 #######   Computing CES parameters and income   ########
 # ____________________________________________________ #
 
@@ -502,16 +398,17 @@ df.reg$CoG  <- ifelse(df.reg$goat != 0, df.reg$cattle/df.reg$goat, NA)
 df.reg$CoG[is.finite(df.reg$CoG) == FALSE] <- NA
 df.reg$CoG[df.reg$CoG == 0] <- 0.01
 
-df.reg$mrts2 <- ifelse(df.reg$mrts == 0, 1, ifelse(df.reg$mrts == 1, 1.01, df.reg$mrts))
-df.reg$mrts2[is.finite(df.reg$mrts2) == FALSE | df.reg$mrts2 < 0] <- NA
+df.reg$mrts[df.reg$mrts < 0]  <- NA
+df.reg$mrts[df.reg$mrts == 0] <- 1
 
 # Running the regression (with individual fixed effects)
-ces.model <- lm(log(df.reg$mrts2) ~ log(df.reg$CoG) + df.reg$Respondent_ID + log(df.reg$CoG):df.reg$Respondent_ID)
+ces.model <- lm(log(df.reg$mrts) ~ log(df.reg$CoG) + df.reg$Respondent_ID + log(df.reg$CoG):df.reg$Respondent_ID)
 
+# Extracting regression results and placing in dataframe
 a.est  <- coef(ces.model)[1]
 b.est  <- coef(ces.model)[2]
-gammas <- coef(ces.model)[3:71]
-kappas <- coef(ces.model)[72:140]
+gammas <- coef(ces.model)[3:69]
+kappas <- coef(ces.model)[70:136]
 
 coeffs <- data.frame(Respondent_ID = unique(ces.model[["model"]][["df.reg$Respondent_ID"]])[-1], 
                      gamma = gammas, 
@@ -522,97 +419,29 @@ tmp <- data.frame(Respondent_ID = unique(ces.model[["model"]][["df.reg$Responden
 
 coeffs <- rbind(coeffs, tmp)
 
+# Using regression estimates to calculate CES parameters
 A <- exp(a.est)/(1+exp(a.est))
-coeffs$alpha <- A + coeffs$gamma
+coeffs$B <- (A/(1-A))*exp(coeffs$gamma)
+coeffs$alpha <- coeffs$B/(coeffs$B + 1)
 summary(coeffs$alpha)
+coeffs$B <- NULL
 
-coeffs$rho   <- coeffs$kappa + b.est + 1
+coeffs$rho   <- ifelse(is.na(coeffs$kappa) == FALSE, coeffs$kappa + b.est + 1, b.est + 1)
 summary(coeffs$rho)
 
 # Appending coefficients to original dataset
 pastoralist <- merge(pastoralist, coeffs, by = "Respondent_ID", all = TRUE)
 
 # Using average parameters to fill in the gaps
-pastoralist$alpha <- ifelse(is.na(pastoralist$alpha) == TRUE, mean(coeffs$alpha, na.rm=TRUE), pastoralist$alpha)
+pastoralist$alpha <- ifelse(is.na(pastoralist$alpha) == TRUE, mean(coeffs$alpha), pastoralist$alpha)
 
-pastoralist$rho <- ifelse(is.na(pastoralist$rho) == TRUE, mean(coeffs$rho, na.rm=TRUE), pastoralist$rho)
+pastoralist$rho <- ifelse(is.na(pastoralist$rho) == TRUE, mean(coeffs$rho), pastoralist$rho)
 
 # Computing CES income using these parameters
 pastoralist <- pastoralist %>% mutate(CES.income = ((alpha*herd^rho)+((1-alpha)*num_goats^rho))^(1/rho))
 summary(pastoralist$CES.income)
 
-rm(coeffs, tmp)
-
-#######   Prepping for simulation of peace payment   #######
-# ________________________________________________________ #
-
-# Putting dataset into long format
-rantot <- pastoralist[, c("ranch_free_cattle", "ranch_250ksh_cattle", "ranch_500ksh_cattle", "ranch_750ksh_cattle", "ranch_1000ksh_cattle","ranch_free_goat", "ranch_250ksh_goat", "ranch_500ksh_goat", "ranch_750ksh_goat", "ranch_1000ksh_goat", "ranch_free_ranch", "ranch_250ksh_ranch", "ranch_500ksh_ranch", "ranch_750ksh_ranch", "ranch_1000ksh_ranch", "num_goats","herd","Respondent_ID")]
-
-for (i in 1:nrow(rantot)){
-  for (j in 1:4){
-    rantot[i,j]   <- ifelse(rantot[i,j] < rantot[i,j+1], rantot[i,j+1], rantot[i,j]) 
-    rantot[i,j+5] <- ifelse(rantot[i,j+5] < rantot[i,j+6], rantot[i,j+6], rantot[i,j+5]) 
-    rantot[i,j+10] <- ifelse(rantot[i,j+10] < rantot[i,j+11], rantot[i,j+11], rantot[i,j+10]) 
-  }
-}
-
-df.rantot <- data.frame(price = seq(0,1000,250), 
-                        cattle = c(rantot$ranch_free_cattle[1], 
-                                   rantot$ranch_250ksh_cattle[1], 
-                                   rantot$ranch_500ksh_cattle[1], 
-                                   rantot$ranch_750ksh_cattle[1], 
-                                   rantot$ranch_1000ksh_cattle[1]), 
-                        ranch = c(rantot$ranch_free_ranch[1], 
-                                  rantot$ranch_250ksh_ranch[1], 
-                                  rantot$ranch_500ksh_ranch[1], 
-                                  rantot$ranch_750ksh_ranch[1], 
-                                  rantot$ranch_1000ksh_ranch[1]), 
-                        goat = c(rantot$ranch_free_goat[1], 
-                                 rantot$ranch_250ksh_goat[1], 
-                                 rantot$ranch_500ksh_goat[1], 
-                                 rantot$ranch_750ksh_goat[1], 
-                                 rantot$ranch_1000ksh_goat[1]), 
-                        Respondent_ID = rep(rantot$Respondent_ID[1], 5))
-
-for (i in 2:nrow(rantot)){
-  df <- data.frame(price = seq(0,1000,250), 
-                   cattle = c(rantot$ranch_free_cattle[i], 
-                              rantot$ranch_250ksh_cattle[i], 
-                              rantot$ranch_500ksh_cattle[i], 
-                              rantot$ranch_750ksh_cattle[i], 
-                              rantot$ranch_1000ksh_cattle[i]), 
-                   ranch = c(rantot$ranch_free_ranch[i], 
-                             rantot$ranch_250ksh_ranch[i], 
-                             rantot$ranch_500ksh_ranch[i], 
-                             rantot$ranch_750ksh_ranch[i], 
-                             rantot$ranch_1000ksh_ranch[i]),
-                   goat = c(rantot$ranch_free_goat[i], 
-                            rantot$ranch_250ksh_goat[i], 
-                            rantot$ranch_500ksh_goat[i], 
-                            rantot$ranch_750ksh_goat[i], 
-                            rantot$ranch_1000ksh_goat[i]), 
-                   Respondent_ID = rep(rantot$Respondent_ID[i], 5))
-  df.rantot <- rbind(df.rantot, df)
-  rm(df)
-}
-
-# How much would people increase herd sizes for each additional cow put on a ranch?
-cattle.model <- lm(df.rantot$cattle ~ df.rantot$ranch*df.rantot$Respondent_ID + df.rantot$goat*df.rantot$Respondent_ID)
-
-goat.model   <- lm(df.rantot$goat ~ df.rantot$ranch*df.rantot$Respondent_ID + df.rantot$cattle*df.rantot$Respondent_ID)
-
-# Storing this information and putting into dataframe
-vec      <- unique(cattle.model[["model"]][["df.rantot$Respondent_ID"]])[-1]
-othervec <- coef(cattle.model)[304:603]
-thirdvec <- coef(goat.model)[304:603]
-tmp      <- data.frame(Respondent_ID = vec, change.c = othervec, change.g = thirdvec)
-tmp2     <- data.frame(Respondent_ID = unique(cattle.model[["model"]][["df.rantot$Respondent_ID"]])[1],
-                       change.c = coef(cattle.model)[2], change.g = coef(goat.model)[2])
-tmp      <- rbind(tmp, tmp2)
-
-pastoralist <- merge(pastoralist, tmp, by = "Respondent_ID", all = TRUE)
-rm(tmp, tmp2)
+rm(coeffs, tmp, df.mrts, df.reg, xast)
 
 #######   Creating market demand curve   #######
 # _________________________________________ #
@@ -635,99 +464,277 @@ df.agg <- data.frame(price = seq(0, 1000, by = 250),
                               sum(df.overall$quan[df.overall$price == 750]), 
                               sum(df.overall$quan[df.overall$price == 1000])))
 
-demand.curve <- lm(df.agg$price ~ df.agg$quan + I(1/df.agg$quan))
+demand.curve <- lm(df.agg$price ~ df.agg$quan)
 summary(demand.curve)
 
-## Computing value of surplus transfer
-area <- 979*(677.3218-450)
-area # 222,548 ksh/month paid to MY SAMPLE by all ranchers collectively
-222548/301 # 739 ksh/month paid to each pastoralist every month by all ranchers collectively
-222548/54  # 4121 ksh/month paid to each pastoralist who uses a ranch
+demand.eq <- expression(demand.curve[["coefficients"]][1] + 
+                          demand.curve[["coefficients"]][2]*q)
 
+## Computing market clearing price
+obser <- sum(pastoralist$cattle_ranch, na.rm = TRUE)
+mkt.price <- eval(demand.eq, envir = data.frame(q = obser))
+
+## Computing aggregate cash value of surplus transfer
+area <- obser*(mkt.price-450)
+
+rm(df.start, df.overall, df, past)
 
 #######   Simulating the peace payment   #######
 # ____________________________________________ #
 
-# Calculating slope of the IC at the observed (C,G) point for each respondent
-deriv.CES <- function(I,C,a,p){(a*C^(p-1)*((a*C^p-I^p)/(a-1))^(1/p-1))/(a-1)}
-pastoralist$slope.CES <- deriv.CES(I = pastoralist$CES.income, C = pastoralist$herd, a = pastoralist$alpha, p = pastoralist$rho)
+# Using implicit function theorem to calculate slope of the IC at the observed (C,G) point for each respondent
+pastoralist <- pastoralist %>% mutate(slope.CES = -(alpha*herd^(rho-1))/((1-alpha)*num_goats^(rho-1)))
+pastoralist$slope.CES[is.infinite(pastoralist$slope.CES) == TRUE] <- NA
 
-# Now I simulate the peace payment through a change in Cobb-Douglas income
-pastoralist <- pastoralist %>% mutate(newInc.low.CES = ((alpha*(herd-9*change.c)^rho)+((1-alpha)*(num_goats-9*change.g)^rho))^(1/rho))
+# Getting y intercept of the current budget constraint ("goat intercept") which will stay constant
+pastoralist <- pastoralist %>% mutate(G1 = num_goats - slope.CES*herd)
 
-summary(pastoralist$CES.income)
-summary(pastoralist$newInc.low.CES)
+# Getting x intercept of the current budget constraint ("cattle intercept") which will change
+pastoralist <- pastoralist %>% mutate(C1 = -G1/slope.CES)
+pastoralist$C1[is.infinite(pastoralist$C1) == TRUE] <- NA
 
-# Find the number of cattle on the curve for this income level, maintaining the same slope as before
-CES.optim <- function(C,I,a,p,x){(a*C^(p-1)*((a*C^p-I^p)/(a-1))^(1/p-1))/(a-1) - x}
-pastoralist$newCattle.low.CES <- NA
+# Getting each respondent's share of the surplus transfer
+pastoralist <- pastoralist %>% mutate(cash.share = cattle_ranch/obser)
+pastoralist <- pastoralist %>% mutate(permit.share = (cash.share*area)/450)
 
-# Use uniroot to solve numerically
-for (i in 1:nrow(pastoralist)){
-  pastoralist$newCattle.low.CES[i] <- ifelse(is.null(uniroot.all(CES.optim, c(0,1000),
-                                                                 I = pastoralist$newInc.low.CES[i], 
-                                                                 a = pastoralist$alpha[i], 
-                                                                 p = pastoralist$rho[i], 
-                                                                 x = pastoralist$slope.CES[i])) == FALSE, 
-                                             uniroot.all(CES.optim, c(0,1000), 
-                                                         I = pastoralist$newInc.low.CES[i], 
-                                                         a = pastoralist$alpha[i], 
-                                                         p = pastoralist$rho[i], 
-                                                         x = pastoralist$slope.CES[i]), NA)
-  print(paste(i))
-}
+# Getting the slope of the new budget line
+pastoralist <- pastoralist %>% mutate(b = ifelse(C1-permit.share <= 0, NA, G1/(C1-permit.share)) )
 
-summary(pastoralist$newCattle.low.CES)
+# Getting new number of goats that lines up with this new budget constraint
+pastoralist <- pastoralist %>% mutate(tau = (b*(1-alpha)/alpha)^(1/(rho-1)) )
+pastoralist <- pastoralist %>% mutate(new.goats = G1/(1+b*tau))
 
-# Plug in the cattle number into the IC equation with new income to get the corresponding goat number
-newG.CES <- function(C,I,a,p){(((I^p)-a*(C^p))/(1-a))^(1/p)}
-
-pastoralist$newGoats.low.CES <- newG.CES(C = pastoralist$newCattle.low.CES, 
-                                         I = pastoralist$newInc.low.CES, 
-                                         a = pastoralist$alpha,
-                                         p = pastoralist$rho)
-
-summary(pastoralist$newGoats.low.CES)
-
-# Investigate the change compared to before
-summary(pastoralist$herd/pastoralist$num_goats - pastoralist$newCattle.low.CES/pastoralist$newGoats.low.CES)
-
-summary(pastoralist$herd - pastoralist$newCattle.low.CES)
-summary(pastoralist$num_goats - pastoralist$newGoats.low.CES)
-
-# Creating classes for goat expansion behavior
-pastoralist$pp.behavior.ces <- ifelse(pastoralist$herd/pastoralist$num_goats - pastoralist$newCattle.low.CES/pastoralist$newGoats.low.CES < 0, "Expand goats", 
-                                      ifelse(pastoralist$herd/pastoralist$num_goats - pastoralist$newCattle.low.CES/pastoralist$newGoats.low.CES > 0, "Expand cattle", "Scale up"))
-
-table(pastoralist$pp.behavior.ces)
+# Plugging in to budget constraint to get new number of cattle
+pastoralist <- pastoralist %>% mutate(new.cattle = (G1-new.goats)/b)
 
 # Extracting the people using a ranch
 users <- pastoralist[pastoralist$ranch == 1,]
 
-summary(users$herd-users$newCattle.low.CES)
-summary(users$num_goats-users$newGoats.low.CES)
+# Creating classes for expansion behavior
+users$cgr.now <- users$herd/users$num_goats
+users$cgr.before <- users$new.cattle/users$new.goats
+users$pp.behavior.ces <- ifelse(users$cgr.now < users$cgr.before, "Expand goats", 
+                                      ifelse(users$cgr.now > users$cgr.before, "Expand cattle",
+                                             "Scale up"))
 
-summary(users$herd/users$num_goats - users$newCattle.low.CES/users$newGoats.low.CES)
+users$TLU <- users$herd + 0.2*users$num_goats
+users$new.TLU <- users$new.cattle + 0.2*users$new.goats
+
+# Investigating the change
+summary(users$herd-users$new.cattle)
+summary(users$num_goats-users$new.goats)
+
+summary(users$cgr.now - users$cgr.before)
+summary(users$cgr.now)
+summary(users$cgr.before)
 
 table(users$pp.behavior.ces)
 
-#######   Robustness checks   #######
-# _________________________________ #
+#######   Simulating market absence   #######
+# _________________________________________ #
 
-# Removing Tangi Nyeusi and Endana
-pastoralist.subset <- pastoralist[pastoralist$village != "Tangi Nyeusi" & pastoralist$village != "Endana",]
-noaccess.removed <- glm(ranch ~ class + herd + num_goats + wealth.pc.nl, data = pastoralist.subset, family=binomial(link="logit"))
-summary(noaccess.removed)
-exp(coef(noaccess.removed))
+# Getting choke price and computing consumer surplus
+choke  <- dc.coeff[1]
+consur <- ((choke-mkt.price)*obser/2)
+pastoralist <- pastoralist %>% mutate(CS.share = cash.share*consur)
+pastoralist <- pastoralist %>% mutate(CS.ps = (CS.share/450) + permit.share)
 
-# Examining wealth by rigidity class
-prob.II <- glm(pastoralist$II ~ herd + num_goats + wealth.pc.nl + gender + age + children + education + family_size + employed + risk_choice, data = pastoralist, family = binomial(link = "logit"))
-summary(prob.II)
-exp(coef(prob.II))
+# Getting the slope of the new budget line
+pastoralist <- pastoralist %>% mutate(b.CS = ifelse(C1-CS.ps <= 0, NA, G1/(C1-CS.ps)) )
 
-# Investigating occupation
-prob.accept.job <- glm(ranch ~ job*class, data = pastoralist, family=binomial(link="logit"))
-summary(prob.accept.job)
+# Getting new number of goats that lines up with this new budget constraint
+pastoralist <- pastoralist %>% mutate(tau.CS = (b.CS*(1-alpha)/alpha)^(1/(rho-1)) )
+pastoralist <- pastoralist %>% mutate(new.goats.CS = G1/(1+b.CS*tau.CS))
+
+# Plugging in to budget constraint to get new number of cattle
+pastoralist <- pastoralist %>% mutate(new.cattle.CS = (G1-new.goats.CS)/b.CS)
+
+# Extracting the people using a ranch
+users <- pastoralist[pastoralist$ranch == 1,]
+
+# Creating classes for expansion behavior
+users$cgr.now.CS <- users$new.cattle/users$new.goats
+users$cgr.before.CS <- users$new.cattle.CS/users$new.goats.CS
+users$CS.behavior.ces <- ifelse(users$cgr.now.CS < users$cgr.before.CS, "Expand goats", 
+                                ifelse(users$cgr.now.CS > users$cgr.before.CS, "Expand cattle",
+                                       "Scale up"))
+
+users$new.TLU.CS <- users$new.cattle.CS + 0.2*users$new.goats.CS
+
+# Investigating the change
+summary(users$new.cattle-users$new.cattle.CS)
+summary(users$new.goats-users$new.goats.CS)
+
+summary(users$cgr.now.CS - users$cgr.before.CS)
+summary(users$cgr.now.CS)
+summary(users$cgr.before.CS)
+
+table(users$CS.behavior.ces)
+
+#######   Computing number of animals on group ranch   ########
+# ___________________________________________________________ #
+
+ngombe <- pastoralist %>% select(Respondent_ID, new.cattle.CS, new.goats.CS, 
+                                 new.cattle, new.goats, herd, num_goats, cattle_ranch)
+
+zast <- pastoralist[, c("ranch_free_ranch", "ranch_250ksh_ranch", "ranch_500ksh_ranch", "ranch_750ksh_ranch", "ranch_1000ksh_ranch","Respondent_ID")]
+
+# Data cleaning that will allow code to run smoothly later
+for (i in 1:nrow(zast)){
+  for (j in 1:4){
+    zast[i,j]   <- ifelse(zast[i,j] < zast[i,j+1], zast[i,j+1], zast[i,j])
+  }
+}
+
+# Extracting individual demand at market clearing price
+for (i in 1:nrow(zast)){
+  # Create a data frame containing demand curve data for each person
+  df <- data.frame(price = seq(from = 0, to = 1000, by = 250), quan = c(zast[i,1], zast[i,2], zast[i,3], zast[i,4], zast[i,5]))
+  for(j in 1:4){
+    if(is.na(df$quan[j]) == FALSE){
+      if(df$quan[j] == 0){
+        df$quan[j+1:(nrow(df)-j)] <- NA # Set any redundant 0's to NA
+      }
+    }
+  }
+  
+  # This concludes the data prep portion of this loop
+  
+  if(length(unique(df$quan)) > 1){
+    
+    reggie <- lm(df$price ~ df$quan)
+    
+    inter <- reggie$coefficients[1]
+    slope <- reggie$coefficients[2]
+    
+    zast$mkt.c.demand[i] <- ifelse((mkt.price - inter)/slope > 0, (mkt.price - inter)/slope, 0)
+    
+  } else{
+    if(length(unique(df$quan)) == 1){
+      zast$mkt.c.demand[i] <- NA
+    } 
+  }
+}
+rm(reggie, inter, slope, df)
+
+# Appending to dataset
+zast   <- zast %>% select(Respondent_ID, mkt.c.demand)
+ngombe <- merge(ngombe, zast, by = "Respondent_ID", all = TRUE)
+
+ngombe$on.commons.permits  <- ngombe$new.cattle - ngombe$mkt.c.demand
+ngombe$on.commons.transfer <- ngombe$herd - ngombe$cattle_ranch
+
+# Extracting people using the ranches now
+ngombe.users <- ngombe[ngombe$cattle_ranch > 0,]
+
+summary(ngombe.users$on.commons.permits)
+summary(ngombe.users$on.commons.transfer)
+
+summary(ngombe.users$on.commons.permits  - ngombe.users$new.cattle.CS)
+summary(ngombe.users$on.commons.transfer - ngombe.users$on.commons.permits)
+summary(ngombe.users$on.commons.transfer - ngombe.users$new.cattle.CS)
+
+ngombe.users$on.commons.nothing.TLU  <- ngombe.users$new.cattle.CS + 0.2*ngombe.users$new.goats.CS
+ngombe.users$on.commons.permits.TLU  <- ngombe.users$on.commons.permits + 0.2*ngombe.users$new.goats
+ngombe.users$on.commons.transfer.TLU <- ngombe.users$on.commons.transfer + 0.2*ngombe.users$num_goats
+
+summary(ngombe.users$on.commons.nothing.TLU)
+summary(ngombe.users$on.commons.permits.TLU)
+summary(ngombe.users$on.commons.transfer.TLU)
+
+#######   Non-users' response to free grass   #######
+# _________________________________________________ #
+
+# Create new dataset
+nonusers <- pastoralist[pastoralist$ranch == 0,]
+
+# Get amount of leftover space for each person
+multp <- length(nonusers$herd)/length(users$herd)
+
+space.tran.total <- median(ngombe.users$on.commons.permits.TLU - ngombe.users$on.commons.transfer.TLU)
+space.perm.total <- median(ngombe.users$on.commons.nothing.TLU - ngombe.users$on.commons.permits.TLU)
+
+space.tran <- space.tran.total/multp
+space.perm <- space.perm.total/multp
+
+# Shift out the budget constraints under each market condition
+nonusers <- nonusers %>% mutate(C1.tran = C1 - space.tran)
+nonusers <- nonusers %>% mutate(G1.tran = G1 - 5*space.tran)
+
+nonusers <- nonusers %>% mutate(C1.perm = C1.tran - space.perm)
+nonusers <- nonusers %>% mutate(G1.perm = G1.tran - 5*space.perm)
+
+### Simulate the new bundle under each condition
+
+## First, with transfer
+
+# Getting the slope of the new budget line
+nonusers <- nonusers %>% mutate(b.tran = ifelse(C1.tran <= 0, NA, G1.tran/C1.tran))
+
+# Getting tau for this market condition
+nonusers <- nonusers %>% mutate(tau.space.tran = (b.tran*(1-alpha)/alpha)^(1/(rho-1)) )
+
+# Getting new number of goats that lines up with new budget constraint
+nonusers <- nonusers %>% mutate(goats.space.tran = G1.tran/(1+b.tran*tau.space.tran))
+
+# Plugging in to budget constraint to get new number of cattle
+nonusers <- nonusers %>% mutate(cattle.space.tran = (G1.tran-goats.space.tran)/b.tran)
+
+## Now, market-clearing
+
+# Getting the slope of the new budget line
+nonusers <- nonusers %>% mutate(b.perm = ifelse(C1.perm <= 0, NA, G1.perm/C1.perm))
+
+# Getting tau for this market condition
+nonusers <- nonusers %>% mutate(tau.space.perm = (b.perm*(1-alpha)/alpha)^(1/(rho-1)) )
+
+# Getting new number of goats that lines up with new budget constraint
+nonusers <- nonusers %>% mutate(goats.space.perm = G1.perm/(1+b.perm*tau.space.perm))
+
+# Plugging in to budget constraint to get new number of cattle
+nonusers <- nonusers %>% mutate(cattle.space.perm = (G1.perm-goats.space.perm)/b.perm)
+
+### Getting the effect of these income boosts
+nonusers$space.tran.TLU <- nonusers$cattle.space.tran + 0.2*nonusers$goats.space.tran
+nonusers$space.perm.TLU <- nonusers$cattle.space.perm + 0.2*nonusers$goats.space.perm
+nonusers$observed.TLU   <- nonusers$herd + 0.2*nonusers$num_goats
+
+summary(nonusers$observed.TLU)
+summary(nonusers$space.tran.TLU)
+summary(nonusers$space.perm.TLU)
+
+summary(nonusers$herd/nonusers$num_goats)
+summary(nonusers$cattle.space.tran/nonusers$goats.space.tran)
+summary(nonusers$cattle.space.perm/nonusers$goats.space.perm)
+
+### How do nonusers affect the space left by users?
+
+# See how they change their herds
+nonusers$goat.change.mkt   <- nonusers$goats.space.tran - nonusers$goats.space.perm
+nonusers$cattle.change.mkt <- nonusers$cattle.space.tran - nonusers$cattle.space.perm
+
+nonusers$goat.change.transfer  <- nonusers$num_goats - nonusers$goats.space.tran
+nonusers$cattle.change.transfer <- nonusers$herd - nonusers$cattle.space.tran
+
+# Take the median
+goat.c.mkt        <- median(nonusers$goat.change.mkt, na.rm = TRUE)
+goat.c.transfer   <- median(nonusers$goat.change.transfer, na.rm = TRUE)
+cattle.c.mkt      <- median(nonusers$cattle.change.mkt, na.rm = TRUE)
+cattle.c.transfer <- median(nonusers$cattle.change.transfer, na.rm = TRUE)
+
+cattle.c.mkt.users      <- median(ngombe.users$on.commons.permits  - ngombe.users$new.cattle.CS, na.rm = TRUE)
+cattle.c.transfer.users <- median(ngombe.users$on.commons.transfer - ngombe.users$on.commons.permits, na.rm = TRUE)
+goat.c.mkt.users        <- median(ngombe.users$new.goats - ngombe.users$new.goats.CS, na.rm = TRUE)
+goat.c.transfer.users   <- median(ngombe.users$num_goats - ngombe.users$new.goats, na.rm = TRUE)
+
+# Find the TLU of these changes and add in the users
+TLU.mkt <- (cattle.c.mkt.users) + 0.2*(goat.c.mkt.users) + 4.5*(cattle.c.mkt + 0.2*goat.c.mkt)
+TLU.mkt
+1-(-TLU.mkt/space.perm.total)
+TLU.transfer <- (cattle.c.transfer.users) + 0.2*(goat.c.transfer.users) + 4.5*(cattle.c.transfer + 0.2*goat.c.transfer)
+TLU.transfer
+1-(-TLU.transfer/space.tran.total)
+1-((-TLU.mkt - TLU.transfer)/(space.perm.total + space.tran.total))
 
 #######   Prepping for total market graph   #######
 # _______________________________________________ #
@@ -783,55 +790,128 @@ df.agg <- df.agg[,-4]
 ## Payment for peace
 
 dc.coeff <- demand.curve$coefficients
-dc.coeff
-demand <- function(x){dc.coeff[1] + dc.coeff[2]*x + dc.coeff[3]/x}
+demand <- function(x){dc.coeff[1] + dc.coeff[2]*x}
 int <- demand(sum(pastoralist$cattle_ranch))
-int
-demand(3342)
+inter <- function(p){(p-dc.coeff[1])/dc.coeff[2]}
+other <- inter(450)
 
-x  <- seq(978,3343,by=1)
-y  <- demand(x)
-gg1 <- data.frame(x = x, y = y)
+gg1 <- data.frame(x = obser, price = c(450,int))
 
-cols <- c("Surplus transfer"="grey30", "Value of grass and own cattle"="grey75","black"="black", "Observed price x quantity"="red")
+cols <- c("Surplus transfer" = "grey75", 
+          "Observed price x quantity" = "black",
+          "Market-clearing price x quantity" = "black",
+          "Original supply curve" = NA,
+          "Price ceiling supply curve" = NA,
+          "Market demand curve" = NA)
 
-g <- ggplot(data = df.agg, aes(quan, price)) + 
-  geom_smooth(method = "lm", se = FALSE, formula = y ~ x + I(1/x), col = "black") + 
-  geom_rect(stat = "identity", aes(fill = "Surplus transfer", xmin = 0, xmax = 979, ymin = 450, ymax = int, colour = "black")) + 
-  geom_ribbon(data = gg1, mapping = aes(x = x, ymin = 450, ymax = ifelse(x > 985, y, 450), fill = "Value of grass and own cattle", colour = "black"), inherit.aes = FALSE) + 
-  geom_point(aes(x = 979, y = 450, col = "Observed price x quantity"), size = 3.5) +
-  geom_point(aes(x = 979, y = int), size = 3.5, col = "black") + 
-  geom_point(aes(x = 3342, y = 450), size = 3.5, col = "black") + 
-  ggtitle("Market demand curve for grazing permits") +
+shapes <- c("Surplus transfer" = NA, 
+            "Observed price x quantity" = 16,
+            "Market-clearing price x quantity" = 17,
+            "Original supply curve" = NA,
+            "Price ceiling supply curve" = NA,
+            "Market demand curve" = NA)
+
+lts    <- c("Original supply curve" = "dashed",
+            "Price ceiling supply curve" = "dotted",
+            "Market demand curve" = "solid",
+            "Surplus transfer" = NA, 
+            "Observed price x quantity" = NA,
+            "Market-clearing price x quantity" = NA)
+
+labs   <- c("Observed price x quantity", "Market-clearing price x quantity")
+linelabs <- c("Original supply curve", "Price ceiling supply curve", "Market demand curve")
+
+ggplot(data = gg1, aes(quan, price)) + 
+  geom_abline(aes(linetype = "Market demand curve", slope = dc.coeff[2], intercept = dc.coeff[1]), 
+              col = "black") + 
+  geom_rect(aes(fill = "Surplus transfer", xmin = 0, xmax = 979, ymin = 450, ymax = int), 
+            col = "black") + 
+  geom_point(aes(x = obser, y = 450, col = "Observed price x quantity", 
+                 shape = "Observed price x quantity"), size = 3.5) +
+  geom_point(aes(x = obser, y = int, col = "Market-clearing price x quantity", 
+                 shape = "Market-clearing price x quantity"), size = 3.5) +
+  geom_abline(aes(linetype = "Original supply curve", slope = 0.1, intercept = 665), 
+              col = "black") + 
+  geom_abline(aes(linetype = "Price ceiling supply curve", slope = 0.1, intercept = 355), 
+              col = "black") + 
   xlab("# of livestock") +
-  ylab("Price for contracts (ksh/head/month)")
-g + coord_cartesian(xlim = c(0,10000), ylim = c(0,750)) + 
-  scale_fill_manual(name = "", values = cols) +
-  scale_colour_manual(name="Error Bars", values=cols, guide = "none")+
+  ylab("Price for grazing permits (ksh/head/month)") +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0)) + 
+  coord_cartesian(xlim = c(0,12500), ylim = c(0,900)) + 
+  scale_fill_manual(values = cols, name = "Area", breaks = c("Surplus transfer")) +
+  scale_color_manual(values = cols, name = NULL, guide = "none") +
+  scale_shape_manual(values = shapes, name = "Points", breaks = labs) +
+  scale_linetype_manual(values = lts, name = "Lines", breaks = linelabs) +
   theme(axis.line = element_line(color = "black"), 
-        legend.position = c(0.75,0.75),
+        legend.position = c(0.8,0.65),
         legend.text = element_text(size=10),
+        legend.key = element_rect(fill = "transparent", colour = "transparent"),
         panel.background = element_rect(fill = "transparent", color = NA),
-        plot.background = element_rect(fill = "transparent", color = NA))
+        plot.background = element_rect(fill = "transparent", color = NA),
+        plot.margin = margin(10,15,10,10))
 
-## Total market
+rm(gg1, cols, shapes, labs)
 
-cols1 <- c("Total cattle"="blue","Ranch cattle"="red","Total goats"="black","Current market permit price"="darkgreen")
+## Representative IC shift for first movers
+graphing <- pastoralist[pastoralist$ranch == 1,]
+ex <- graphing[graphing$Respondent_ID == "80-77-18-29",]
+ex <- ex %>% select(herd, num_goats, CES.income, alpha, rho, new.goats, new.cattle, slope.CES, b, C1, G1, permit.share)
+ex$new.inc <- CES(C = ex$new.cattle, G = ex$new.goats, a = ex$alpha, p = ex$rho)
 
-ggplot(data = df.agg, aes(y = price)) + 
-  geom_smooth(method = "lm", se = FALSE, formula = y ~ x + I(1/x), aes(x = quan, colour = "Ranch cattle")) +
-  geom_smooth(method = "lm", se = FALSE, formula = y ~ x + I(1/x^2), aes(x = quang, colour = "Total goats")) +
-  geom_smooth(method = "lm", se = FALSE, formula = y ~ x + I(1/x^20), aes(x = quanc, colour = "Total cattle")) +
-  ggtitle("Market for cattle grazing permits and its effect on livestock herds") + 
-  xlab("Number of livestock") + ylab("Price of ranch access for cattle (ksh/head/month)") + 
-  geom_hline(aes(yintercept = 450, colour = "Current market permit price")) + 
-  geom_point(aes(x = 8886, y = 450), size = 3.5, col = "blue") + 
-  geom_point(aes(x = 30756, y = 450), size = 3.5, col = "black") + 
-  geom_point(aes(x = 979, y = 450), size = 3.5, col = "red") +
-  scale_fill_manual(name = "", values = cols1) +
-  scale_colour_manual(name="", values=cols1)+
+graph.data <- data.frame(goats = seq(0,100, by=2), cattle = seq(0,50))
+
+ggplot(data = graph.data, aes(x = cattle, y = goats)) +
+  stat_function(fun = function(x)((ex$CES.income^ex$rho-ex$alpha*x^ex$rho)/
+                                    (1-ex$alpha))^(1/ex$rho), linetype = "twodash") +
+  stat_function(fun = function(x)(((ex$new.inc)^ex$rho-ex$alpha*x^ex$rho)/
+                                    (1-ex$alpha))^(1/ex$rho)) +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0)) +
+  geom_segment(aes(x = 0, xend = ex$C1, y = ex$G1, yend = 0), linetype = "twodash") +
+  geom_segment(aes(x = 0, xend = ex$C1-ex$permit.share, y = ex$G1, yend = 0)) +
+  geom_abline(aes(slope = ex$new.goats/ex$new.cattle, intercept = 0), linetype = "dotted") + 
+  coord_cartesian(xlim = c(0,ex$C1+10), ylim = c(0,ex$G1+25), clip = "off") +
   theme(axis.line = element_line(color = "black"), 
-        legend.position = "top",
-        legend.text = element_text(size=10),
+           panel.background = element_rect(fill = "transparent", color = NA),
+           plot.background = element_rect(fill = "transparent", color = NA),
+           axis.text.x=element_blank(),
+           axis.ticks.x=element_blank(),
+           axis.text.y=element_blank(),
+           axis.ticks.y=element_blank(),
+           axis.title.x = element_text(hjust = 1),
+           axis.title.y = element_text(hjust = 1)) + 
+  annotation_custom(textGrob("C1"), xmin = 18.7, xmax = 18.7, ymin = -1.75, ymax = -1.75) +
+  annotation_custom(textGrob("C1 + permits"), xmin = 33, xmax = 33, ymin = -1.75, ymax = -1.75) +
+  annotation_custom(textGrob("G1"), xmin = -1, xmax = -1, ymin = 67, ymax = 67)
+
+## Representative IC shift for second movers
+ex <- nonusers[4,]
+ex <- ex %>% select(herd, num_goats, CES.income, alpha, rho, goats.space.tran, cattle.space.tran, slope.CES, b, C1, G1)
+ex$new.inc <- CES(C = ex$cattle.space.tran, G = ex$goats.space.tran, a = ex$alpha, p = ex$rho)
+
+graph.data <- data.frame(goats = seq(0,100, by=2), cattle = seq(0,50))
+
+
+ggplot(data = graph.data, aes(x = cattle, y = goats)) +
+  stat_function(fun = function(x)((ex$CES.income^ex$rho-ex$alpha*x^ex$rho)/
+                                    (1-ex$alpha))^(1/ex$rho), linetype = "twodash") +
+  stat_function(fun = function(x)(((ex$new.inc)^ex$rho-ex$alpha*x^ex$rho)/(1-ex$alpha))^(1/ex$rho)) +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0)) +
+  geom_segment(aes(x = 0, xend = ex$C1, y = ex$G1, yend = 0), linetype = "twodash") +
+  geom_segment(aes(x = 0, xend = ex$C1-space.tran, y = ex$G1-5*space.tran, yend = 0)) +
+  coord_cartesian(xlim = c(0,ex$C1+3), ylim = c(0,ex$G1+10), clip = "off") +
+  theme(axis.line = element_line(color = "black"), 
         panel.background = element_rect(fill = "transparent", color = NA),
-        plot.background = element_rect(fill = "transparent", color = NA))
+        plot.background = element_rect(fill = "transparent", color = NA),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.title.x = element_text(hjust = 1),
+        axis.title.y = element_text(hjust = 1)) + 
+  annotation_custom(textGrob("C1"), xmin = ex$C1-space.tran, xmax = ex$C1-space.tran, ymin = -1, ymax = -1) +
+  annotation_custom(textGrob("C2"), xmin = ex$C1, xmax = ex$C1, ymin = -1, ymax = -1) +
+  annotation_custom(textGrob("G1"), xmin = -0.3, xmax = -0.3, ymin = ex$G1-5*space.tran, ymax = ex$G1-5*space.tran) +
+  annotation_custom(textGrob("G2"), xmin = -0.3, xmax = -0.3, ymin = ex$G1, ymax = ex$G1)
